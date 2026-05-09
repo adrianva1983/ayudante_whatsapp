@@ -42,6 +42,12 @@ export const env = {
   geminiTopP: asNumber(process.env.GEMINI_TOP_P, 0.8),
   geminiMaxTokens: asNumber(process.env.GEMINI_MAX_TOKENS, 4096),
 
+  // ── Groq (Whisper transcription) ──────────────────────────────────
+  // Free tier: 28,800 audio seconds/day. Get key at https://console.groq.com
+  groqApiKey: process.env.GROQ_API_KEY || "",
+  groqWhisperModel: process.env.GROQ_WHISPER_MODEL || "whisper-large-v3-turbo",
+  whisperLanguage: process.env.WHISPER_LANGUAGE || "es",
+
   // ── Autorización ──────────────────────────────────────────────────
   // Supports single ALLOWED_SENDER or comma-separated ALLOWED_SENDERS
   allowedSender: normalizeNumber(process.env.ALLOWED_SENDER || ""),

@@ -9,6 +9,7 @@ import {
   parseLocalReviewCommand,
   reviewLocalProject
 } from "../services/review/localReviewService.js";
+import { WhisperTranscriber } from "../services/transcription/whisperClient.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -113,6 +114,13 @@ const HELP_TEXT = `🤖 *Ayudante Bot*
 export const createMessageHandler = ({ sock, llmProvider, sessionStore, logger }) => {
   const rateLimiter = new RateLimiter(env.rateLimitPerMinute);
   const botStartTime = Date.now();
+  const transcriber = new WhisperTranscriber();
+
+  if (transcriber.isConfigured) {
+    logger.info({ model: env.groqWhisperModel }, "Transcripcion de audio activa (Groq Whisper)");
+  } else {
+    logger.warn("GROQ_API_KEY no configurado — mensajes de voz no seran transcritos");
+  }
 
   /** Check if the socket is currently connected and open. */
   const isSocketOpen = () => sock.ws?.isOpen === true;
@@ -376,34 +384,53 @@ export const createMessageHandler = ({ sock, llmProvider, sessionStore, logger }
 
       // ── Audio / voice message handling ───────────────────────────────────
       if (audioMessage) {
+        if (!transcriber.isConfigured) {
+          await safeSend(remoteJid, "❌ No hay servicio de transcripción configurado.\nAñade GROQ_API_KEY en el .env para usar mensajes de voz.", { senderNumber });
+          return;
+        }
+
         const audioBuffer = await downloadMedia(upsert);
         if (!audioBuffer) {
           await safeSend(remoteJid, "❌ No pude descargar el audio.", { senderNumber });
           return;
         }
 
-        const mimeType = audioMessage.mimetype || "audio/ogg; codecs=opus";
-        const attachment = { type: "audio", mimeType, buffer: audioBuffer };
-        const session = await sessionStore.getSession(remoteJid);
-        const userContent = text || "Transcribe y responde a este mensaje de voz.";
+        // Step 1: Transcribe audio → text via Groq Whisper
+        let transcribedText;
+        try {
+          const mimeType = audioMessage.mimetype || "audio/ogg";
+          transcribedText = await transcriber.transcribe(audioBuffer, mimeType, env.whisperLanguage);
+          logger.info({ senderNumber, chars: transcribedText.length }, "Audio transcrito correctamente");
+        } catch (transcribeErr) {
+          logger.error({ err: transcribeErr }, "Error al transcribir audio");
+          await safeSend(remoteJid, "❌ No pude transcribir el audio. Intenta enviarlo como texto.", { senderNumber });
+          return;
+        }
 
+        if (!transcribedText) {
+          await safeSend(remoteJid, "⚠️ No detecté voz en el audio. ¿Puedes repetirlo?", { senderNumber });
+          return;
+        }
+
+        // Step 2: Send transcription to LLM (no attachment needed — works with any provider)
+        const session = await sessionStore.getSession(remoteJid);
         const messages = [
-          { role: "system", content: "Eres un asistente personal por WhatsApp. Cuando recibas un audio, transcríbelo y responde al contenido." },
+          { role: "system", content: "Eres un asistente personal por WhatsApp. Cuando la conversacion no sea tecnica, responde breve, natural y amigable. El usuario ha enviado un mensaje de voz que ha sido transcrito automaticamente." },
           ...session,
-          { role: "user", content: userContent }
+          { role: "user", content: transcribedText }
         ];
 
-        const reply = await withTypingPresence(remoteJid, () => llmProvider.generateReply(messages, attachment));
-
+        const reply = await withTypingPresence(remoteJid, () => llmProvider.generateReply(messages));
         const usedFallback = llmProvider.getLastFallbackName?.();
-        const replyWithNote = usedFallback ? `_(via ${usedFallback})_\n\n${reply}` : reply;
 
         await sessionStore.appendMessages(remoteJid, [
-          { role: "user", content: "[Audio/Voz]" },
+          { role: "user", content: `[🎤 Voz] ${transcribedText}` },
           { role: "assistant", content: reply }
         ]);
 
-        await safeSend(remoteJid, replyWithNote, { senderNumber, type: "audio" });
+        const responseText = `🎤 _"${transcribedText}"_\n\n${reply}`;
+        const finalReply = usedFallback ? `_(via ${usedFallback})_\n\n${responseText}` : responseText;
+        await safeSend(remoteJid, finalReply, { senderNumber, type: "audio" });
         return;
       }
 

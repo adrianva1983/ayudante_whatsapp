@@ -2,6 +2,9 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../../config/env.js";
 import { LLMProvider } from "./provider.js";
 
+/** Strip codec params that Gemini doesn't accept: "audio/ogg; codecs=opus" → "audio/ogg" */
+const normalizeMime = (mimeType = "") => mimeType.split(";")[0].trim();
+
 /**
  * Converts OpenAI-style messages to Gemini format.
  * Supports multi-modal content (images/audio) in the last user message.
@@ -66,10 +69,10 @@ export class GeminiProvider extends LLMProvider {
       const base64Data = attachment.buffer.toString("base64");
       if (attachment.type === "image") {
         if (!lastUserText) parts.push({ text: "Describe esta imagen detalladamente." });
-        parts.push({ inlineData: { mimeType: attachment.mimeType || "image/jpeg", data: base64Data } });
+        parts.push({ inlineData: { mimeType: normalizeMime(attachment.mimeType || "image/jpeg"), data: base64Data } });
       } else if (attachment.type === "audio") {
-        if (!lastUserText) parts.push({ text: "Transcribe y responde a este audio." });
-        parts.push({ inlineData: { mimeType: attachment.mimeType || "audio/ogg; codecs=opus", data: base64Data } });
+        if (!lastUserText) parts.push({ text: "Transcribe y responde a este mensaje de voz." });
+        parts.push({ inlineData: { mimeType: normalizeMime(attachment.mimeType || "audio/ogg"), data: base64Data } });
       }
     }
 
