@@ -1,0 +1,14 @@
+services:
+  whatsapp-bot:
+    build: .
+    container_name: ayudante-whatsapp-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - whatsapp_auth:/app/auth_info_multi
+      - whatsapp_data:/app/data
+
+volumes:
+  whatsapp_auth:
+  whatsapp_data:

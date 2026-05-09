@@ -1,0 +1,8 @@
+node_modules
+npm-debug.log
+Dockerfile
+docker-compose.yml
+.env
+data/
+auth_info_multi/
+*.log
