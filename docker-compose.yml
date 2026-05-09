@@ -3,6 +3,8 @@ services:
     build: .
     container_name: ayudante-whatsapp-bot
     restart: unless-stopped
+    ports:
+      - "3000:3000"
     env_file:
       - .env
     volumes:

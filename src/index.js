@@ -8,6 +8,8 @@ import { ProviderManager } from "./services/llm/providerManager.js";
 import { SessionStore } from "./services/session/sessionStore.js";
 import { logger } from "./utils/logger.js";
 import { startWhatsappSocket } from "./whatsapp/socket.js";
+import { EventEmitter } from "node:events";
+import { startWebServer } from "./web/server.js";
 
 /**
  * Registers all configured LLM providers.
@@ -73,9 +75,13 @@ const bootstrap = async () => {
 
   const sessionStore = new SessionStore(env.sessionStorePath, env.maxContextMessages);
 
+  const appEvents = new EventEmitter();
+  startWebServer(appEvents, 3000);
+
   const sock = await startWhatsappSocket({
     authDir: env.authDir,
     logger,
+    eventEmitter: appEvents,
     createMessageUpsertHandler: ({ sock }) =>
       createMessageHandler({
         sock,

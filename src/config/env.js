@@ -84,5 +84,9 @@ export const env = {
   rateLimitPerMinute: asNumber(process.env.RATE_LIMIT_PER_MINUTE, 0),
 
   // ── Logging ───────────────────────────────────────────────────────
-  logLevel: process.env.LOG_LEVEL || "info"
+  logLevel: process.env.LOG_LEVEL || "info",
+
+  // ── CRM Hipotecas ─────────────────────────────────────────────────
+  crmApiUrl: process.env.CRM_API_URL || "",
+  crmBearerToken: process.env.CRM_BEARER_TOKEN || ""
 };

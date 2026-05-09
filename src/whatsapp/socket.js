@@ -6,6 +6,7 @@ import {
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import { env } from "../config/env.js";
+import qrcode from "qrcode-terminal";
 
 const BASE_DELAY_MS = 2000;
 const MAX_DELAY_MS = 60000;
@@ -26,6 +27,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const startWhatsappSocket = async ({
   authDir,
   logger,
+  eventEmitter,
   createMessageUpsertHandler,
   _reconnectState = { attempts: 0 }
 }) => {
@@ -36,7 +38,7 @@ export const startWhatsappSocket = async ({
     version,
     auth: state,
     logger: logger.child({ level: "warn" }),
-    printQRInTerminal: true
+    printQRInTerminal: false
   });
 
   const onMessagesUpsert = createMessageUpsertHandler({ sock });
@@ -45,15 +47,24 @@ export const startWhatsappSocket = async ({
   sock.ev.on("messages.upsert", onMessagesUpsert);
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
-    if (qr) logger.info("Nuevo QR generado. Escanealo desde WhatsApp.");
-    if (connection === "connecting") logger.info("Conectando a WhatsApp...");
+    if (qr) {
+      logger.info("Nuevo QR generado. Escanealo desde WhatsApp.");
+      qrcode.generate(qr, { small: true });
+      eventEmitter?.emit("qr", qr);
+    }
+    if (connection === "connecting") {
+      logger.info("Conectando a WhatsApp...");
+      eventEmitter?.emit("status", "connecting");
+    }
 
     if (connection === "open") {
       logger.info("Conexion de WhatsApp abierta.");
+      eventEmitter?.emit("status", "open");
       _reconnectState.attempts = 0; // reset on success
     }
 
     if (connection === "close") {
+      eventEmitter?.emit("status", "close");
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       logger.warn({ statusCode, shouldReconnect }, "Conexion cerrada");
@@ -87,6 +98,7 @@ export const startWhatsappSocket = async ({
       await startWhatsappSocket({
         authDir,
         logger,
+        eventEmitter,
         createMessageUpsertHandler,
         _reconnectState
       });
