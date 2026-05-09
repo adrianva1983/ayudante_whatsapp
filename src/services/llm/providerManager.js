@@ -1,8 +1,24 @@
 import { LLMProvider } from "./provider.js";
 
+/** Detect quota / rate-limit errors from any provider */
+const isQuotaError = (err) => {
+  if (err?.status === 429 || err?.statusCode === 429) return true;
+  const msg = (err?.message || "").toLowerCase();
+  return (
+    msg.includes("429") ||
+    msg.includes("quota") ||
+    msg.includes("rate limit") ||
+    msg.includes("too many requests") ||
+    msg.includes("exceeded")
+  );
+};
+
 /**
  * Manages multiple LLM providers and allows switching between them at runtime.
- * Delegates generateReply/getModel/setModel to the currently active provider.
+ * Features:
+ *  - Runtime provider/model switching via /proveedor and /modelo commands
+ *  - Automatic fallback to next provider on quota/rate-limit errors
+ *  - Attachment (image/audio) passthrough to providers that support it
  */
 export class ProviderManager extends LLMProvider {
   constructor() {
@@ -10,6 +26,7 @@ export class ProviderManager extends LLMProvider {
     /** @type {Map<string, { provider: LLMProvider, description: string }>} */
     this._providers = new Map();
     this._activeName = null;
+    this._lastFallbackName = null;
   }
 
   /**
@@ -28,16 +45,13 @@ export class ProviderManager extends LLMProvider {
     const lower = name.toLowerCase();
     if (!this._providers.has(lower)) {
       const available = [...this._providers.keys()].join(", ");
-      throw new Error(
-        `Proveedor "${name}" no disponible. Disponibles: ${available}`
-      );
+      throw new Error(`Proveedor "${name}" no disponible. Disponibles: ${available}`);
     }
     this._activeName = lower;
+    this._lastFallbackName = null;
   }
 
-  getActiveName() {
-    return this._activeName;
-  }
+  getActiveName() { return this._activeName; }
 
   /** @returns {LLMProvider} */
   getActive() {
@@ -48,11 +62,13 @@ export class ProviderManager extends LLMProvider {
 
   /** List all registered providers with their status. */
   listProviders() {
-    return [...this._providers.entries()].map(([name, { description }]) => ({
+    return [...this._providers.entries()].map(([name, { provider, description }]) => ({
       name,
       description,
       active: name === this._activeName,
-      model: this._providers.get(name).provider.getModel()
+      model: provider.getModel(),
+      supportsVision: provider.supportsVision?.() || false,
+      supportsAudio: provider.supportsAudio?.() || false
     }));
   }
 
@@ -61,17 +77,52 @@ export class ProviderManager extends LLMProvider {
     return this._providers.has(name.toLowerCase());
   }
 
-  // ── Delegated methods ──────────────────────────────────────────────
-
-  async generateReply(messages) {
-    return this.getActive().generateReply(messages);
+  /** Returns the name of the fallback provider used in the last call (or null). */
+  getLastFallbackName() {
+    return this._lastFallbackName;
   }
 
-  getModel() {
-    return this.getActive().getModel();
+  // ── Delegated methods ──────────────────────────────────────────────────────
+
+  /**
+   * Generate a reply with automatic fallback on quota/rate-limit errors.
+   * Tries the active provider first, then cycles through all others.
+   * @param {import("./provider.js").ChatMessage[]} messages
+   * @param {import("./provider.js").MediaAttachment|null} attachment
+   */
+  async generateReply(messages, attachment = null) {
+    const names = [...this._providers.keys()];
+    const startIdx = names.indexOf(this._activeName);
+
+    let lastErr;
+    this._lastFallbackName = null;
+
+    for (let i = 0; i < names.length; i++) {
+      const name = names[(startIdx + i) % names.length];
+      const { provider } = this._providers.get(name);
+
+      try {
+        const reply = await provider.generateReply(messages, attachment);
+        if (i > 0) {
+          // We used a fallback — record which one
+          this._lastFallbackName = name;
+        }
+        return reply;
+      } catch (err) {
+        lastErr = err;
+        if (isQuotaError(err) && i < names.length - 1) {
+          // Quota exhausted — try next provider silently
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw lastErr;
   }
 
-  setModel(model) {
-    this.getActive().setModel(model);
-  }
+  getModel() { return this.getActive().getModel(); }
+  setModel(model) { this.getActive().setModel(model); }
+  supportsVision() { return this.getActive().supportsVision?.() || false; }
+  supportsAudio() { return this.getActive().supportsAudio?.() || false; }
 }

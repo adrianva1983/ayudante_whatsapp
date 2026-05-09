@@ -10,6 +10,10 @@ const asNumber = (value, fallback) => {
 const normalizeNumber = (value = "") => value.replace(/\D/g, "");
 const normalizeJid = (value = "") => value.trim().toLowerCase();
 
+/** Parse a comma-separated env var into a cleaned array */
+const parseList = (value = "", normalize = (x) => x) =>
+  value.split(",").map((s) => normalize(s.trim())).filter(Boolean);
+
 export const env = {
   // ── Proveedor por defecto ─────────────────────────────────────────
   /** Proveedor activo al arrancar: "nvidia", "chatgpt" o "gemini" */
@@ -39,8 +43,18 @@ export const env = {
   geminiMaxTokens: asNumber(process.env.GEMINI_MAX_TOKENS, 4096),
 
   // ── Autorización ──────────────────────────────────────────────────
+  // Supports single ALLOWED_SENDER or comma-separated ALLOWED_SENDERS
   allowedSender: normalizeNumber(process.env.ALLOWED_SENDER || ""),
   allowedSenderJid: normalizeJid(process.env.ALLOWED_SENDER_JID || ""),
+  // Multi-sender lists (superset of the single values above)
+  allowedSenders: parseList(
+    process.env.ALLOWED_SENDERS || process.env.ALLOWED_SENDER || "",
+    normalizeNumber
+  ),
+  allowedSenderJids: parseList(
+    process.env.ALLOWED_SENDER_JIDS || process.env.ALLOWED_SENDER_JID || "",
+    normalizeJid
+  ),
 
   // ── Almacenamiento ────────────────────────────────────────────────
   sessionStorePath: process.env.SESSION_STORE_PATH || "./data/sessions.json",

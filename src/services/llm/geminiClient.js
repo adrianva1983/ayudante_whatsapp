@@ -4,7 +4,7 @@ import { LLMProvider } from "./provider.js";
 
 /**
  * Converts OpenAI-style messages to Gemini format.
- * Gemini uses "model" instead of "assistant" and separates system instructions.
+ * Supports multi-modal content (images/audio) in the last user message.
  */
 const toGeminiFormat = (messages) => {
   let systemInstruction = "";
@@ -16,13 +16,11 @@ const toGeminiFormat = (messages) => {
     } else {
       history.push({
         role: msg.role === "assistant" ? "model" : "user",
-        parts: [{ text: msg.content }]
+        parts: [{ text: typeof msg.content === "string" ? msg.content : msg.content.map(p => p.text || "").join(" ") }]
       });
     }
   }
 
-  // Gemini requires the last message to be from "user" and history to alternate
-  // We separate the last user message to send via sendMessage()
   const lastMsg = history.pop();
   return { systemInstruction, history, lastUserText: lastMsg?.parts?.[0]?.text || "" };
 };
@@ -34,15 +32,12 @@ export class GeminiProvider extends LLMProvider {
     this._client = new GoogleGenerativeAI(env.geminiApiKey);
   }
 
-  getModel() {
-    return this._model;
-  }
+  getModel() { return this._model; }
+  setModel(model) { this._model = model; }
+  supportsVision() { return true; }
+  supportsAudio() { return true; }
 
-  setModel(model) {
-    this._model = model;
-  }
-
-  async generateReply(messages) {
+  async generateReply(messages, attachment = null) {
     if (!env.geminiApiKey) {
       throw new Error("GEMINI_API_KEY is missing.");
     }
@@ -60,7 +55,25 @@ export class GeminiProvider extends LLMProvider {
     });
 
     const chat = model.startChat({ history });
-    const result = await chat.sendMessage(lastUserText);
+
+    // Build the parts for the last user message
+    const parts = [];
+    if (lastUserText) {
+      parts.push({ text: lastUserText });
+    }
+
+    if (attachment?.buffer) {
+      const base64Data = attachment.buffer.toString("base64");
+      if (attachment.type === "image") {
+        if (!lastUserText) parts.push({ text: "Describe esta imagen detalladamente." });
+        parts.push({ inlineData: { mimeType: attachment.mimeType || "image/jpeg", data: base64Data } });
+      } else if (attachment.type === "audio") {
+        if (!lastUserText) parts.push({ text: "Transcribe y responde a este audio." });
+        parts.push({ inlineData: { mimeType: attachment.mimeType || "audio/ogg; codecs=opus", data: base64Data } });
+      }
+    }
+
+    const result = await chat.sendMessage(parts.length > 0 ? parts : lastUserText);
     const text = result.response.text();
 
     return text?.trim() || "No pude generar una respuesta en este momento.";
